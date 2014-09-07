@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -13,16 +15,24 @@ import (
 const ()
 
 type Configs struct {
-	ServerFiles      []string
-	AutoTypes  []string
-	ServerAddr string
-	ServerPath string
+	ServerFiles []string
+	AutoTypes   []string
+	ServerAddr  string
+	ServerPath  string
+	ServerLogging bool
+	Tarpit      bool
 }
 
 var (
-	serverAddr     = ":9000" // change to your serveraddress and port
-	serverConfigs  Configs
-	serverFileList []string
+	serverAddr            = ":9000" // change to your serveraddress and port
+	serverConfigs         Configs
+	serverFileList        []string
+	TarpitHTTPStatusCodes = []int{
+		200, 201, 202, 203, 206, 207,
+		300, 305, 306,
+		400, 401, 402, 403, 404, 405, 406, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 420, 422, 423, 424, 425, 426,
+		500, 501, 502, 503, 504, 505, 506, 507, 508, 509, 510,
+	}
 )
 
 func init() {
@@ -39,6 +49,54 @@ func init() {
 	if len(serverConfigs.ServerAddr) > 0 {
 		serverAddr = serverConfigs.ServerAddr
 	}
+	
+	serverAddr = *(flag.String("address", serverAddr, "Server address"))
+	flag.Parse()
+}
+
+func main() {
+	if len(serverConfigs.ServerPath) > 0 {
+		os.Chdir(serverConfigs.ServerPath)
+	}
+	wd, _ := os.Getwd()
+	log.Println("cd ->", serverConfigs.ServerPath)
+	log.Println("Server dir:", wd)
+
+	// make ServerFile list
+	if len(serverConfigs.ServerFiles) == 0 && len(serverConfigs.AutoTypes) > 0 {
+		lsDir(".")
+		for _, fNme := range serverFileList {
+			for _, ending := range serverConfigs.AutoTypes {
+				if len(fNme) > len(ending)+2 && strings.EqualFold(ending, fNme[len(fNme)-len(ending):]) {
+					serverConfigs.ServerFiles = append(serverConfigs.ServerFiles, fNme[2:])
+				}
+			}
+		}
+	}
+	log.Println("Server will serve these files:", serverConfigs.ServerFiles)
+
+	// start Server
+	http.HandleFunc("/", logPanic(rootHandler))
+	serv := &http.Server{
+		Addr:           serverAddr,
+		Handler:        nil,
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   10 * time.Second,
+		MaxHeaderBytes: 1 << 16,
+	}
+	
+	log.Println("Server starts at", serverAddr)
+	
+	if !serverConfigs.ServerLogging {
+		log.Println("Config says: No server logging")
+	}
+	
+	if serverConfigs.Tarpit {
+		log.Println("Spider/pentester tarpit activated!")
+	}
+	
+	log.Fatal(serv.ListenAndServe())
+
 }
 
 func lsDir(dir string) {
@@ -57,41 +115,6 @@ func lsDir(dir string) {
 			lsDir(fleNme)
 		}
 	}
-}
-
-func main() {
-	if len(serverConfigs.ServerPath) > 0 {
-		os.Chdir(serverConfigs.ServerPath)
-	}
-	wd, _ := os.Getwd()
-	log.Println("cd ->", serverConfigs.ServerPath)
-	log.Println("Server direktory:", wd)
-	
-	// make ServerFile list
-	if len(serverConfigs.ServerFiles) == 0 && len(serverConfigs.AutoTypes) > 0 {
-		lsDir(".")
-		for _, fNme := range serverFileList {
-			for _, ending := range serverConfigs.AutoTypes {
-				if strings.EqualFold(ending, fNme[len(fNme)-len(ending):]) {
-					serverConfigs.ServerFiles = append(serverConfigs.ServerFiles, fNme[2:])
-				}
-			}
-		}
-	}
-	log.Println("Server will serve these files:", serverConfigs.ServerFiles)
-	
-	// start Server
-	http.HandleFunc("/", logPanic(rootHandler))
-	serv := &http.Server{
-		Addr:           serverAddr,
-		Handler:        nil,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   10 * time.Second,
-		MaxHeaderBytes: 1 << 16,
-	}
-	log.Println("Server starts at", serverAddr)
-	log.Fatal(serv.ListenAndServe())
-
 }
 
 func loadConfigs() (cfg Configs) {
@@ -119,22 +142,39 @@ func logPanic(function func(http.ResponseWriter, *http.Request)) func(http.Respo
 }
 
 func rootHandler(w http.ResponseWriter, r *http.Request) {
-	log.Println(r.RequestURI)
+	if serverConfigs.ServerLogging {
+		log.Printf("(%v) %v \"%s %s %s\" \"%s\" \"%s\"\n",
+			time.Now().Unix(),
+			r.RemoteAddr,
+			r.Method,
+			r.URL.String(),
+			r.Proto,
+			r.Referer(),
+			r.UserAgent(),
+		)
+	}
+
 	req := strings.SplitAfterN(r.RequestURI, `/`, 2)
+
 	if len(req[1]) < 2 {
-		http.ServeFile(w, r, "index.html")
-		return
+		req[1] = "indEX.html"
 	}
 
 	if len(serverConfigs.ServerFiles) > 0 {
 		for _, f := range serverConfigs.ServerFiles {
 			if strings.EqualFold(req[1], f) {
-				http.ServeFile(w, r, req[1])
+				http.ServeFile(w, r, f)
 				return
 			}
 		}
-		w.WriteHeader(418)
-		return
+		if serverConfigs.Tarpit {
+			w.WriteHeader(TarpitHTTPStatusCodes[rand.Intn(len(TarpitHTTPStatusCodes))])
+			return
+		} else {
+			w.WriteHeader(404)
+			return
+		}
+
 	}
 
 	http.ServeFile(w, r, req[1])

@@ -111,9 +111,11 @@ function renderSmall() {
 }
 
 function mouseOverSmall(evt) {
-	mouseX = evt.clientX;
-	mouseY = evt.clientY;
-	if (mouseY > photoviewer.bigBildHoehe && mouseY <= photoviewer.bigBildHoehe + photoviewer.smallThumbHoehe) {
+	var big = photoviewerCanvas.getElementById('big');
+	var small = photoviewerCanvas.getElementById('small');
+	var mouseX = evt.clientX - small.offsetLeft;
+	var mouseY = evt.clientY;
+	if (mouseY > (photoviewer.bigBildHoehe + big.offsetTop) && mouseY <= (small.offsetTop + photoviewer.smallThumbHoehe)) {
 		photoviewerCanvas.getElementById('small').style.opacity = '0.5';
 		if (photoviewer.autoplayer) clearInterval(photoviewer.autoplayer);
 		if (Math.floor(mouseX / photoviewer.smallThumbBreite) != photoviewer.bigBildIdx) {
@@ -123,10 +125,8 @@ function mouseOverSmall(evt) {
 				renderBig(bild);
 			}
 		}
-	} else {
-		var small = photoviewerCanvas.getElementById('small');
-		if (small.style.opacity != '1') small.style.opacity = '1';
-	}
+	} 
+	if (small.style.opacity != '1') small.style.opacity = '1';
 }
 
 function renderBig(bild) {
