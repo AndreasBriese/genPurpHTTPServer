@@ -64,9 +64,12 @@ func main() {
 	if len(serverConfigs.ServerPath) > 0 {
 		os.Chdir(serverConfigs.ServerPath)
 	}
-	wd, _ := os.Getwd()
-	log.Println("cd ->", serverConfigs.ServerPath)
-	log.Println("Server dir:", wd)
+	if wd, err := os.Getwd(); err != nil {
+		log.Fatal(err)
+	} else {
+		log.Println("cd ->", serverConfigs.ServerPath)
+		log.Println("Server dir:", wd)
+	}
 
 	// make ServerFile list
 	if len(serverConfigs.ServerFiles) == 0 && len(serverConfigs.AutoTypes) > 0 {
@@ -79,6 +82,21 @@ func main() {
 			}
 		}
 	}
+	serverFileList = []string{}
+	for _, fNme := range serverConfigs.ServerFiles {
+		// check files on list
+		fstat, err := os.Stat(fNme)
+		if err != nil || fstat.IsDir() || fstat.Mode()&^07777 == os.ModeSocket {
+			log.Printf("file '%v' is not available \n", fNme)
+			continue
+		}
+		serverFileList = append(serverFileList, fNme)
+	}
+	serverConfigs.ServerFiles = []string{}
+	for _, fNme := range serverFileList {
+		serverConfigs.ServerFiles = append(serverConfigs.ServerFiles, fNme)
+	}
+
 	log.Println("Server will serve these files:", serverConfigs.ServerFiles)
 
 	// start Server
@@ -162,7 +180,7 @@ func compressedServe(w http.ResponseWriter, r *http.Request, filePath string, ou
 		return true
 	}
 
-	if (fstat.Mode() &^ 07777) == os.ModeSocket {
+	if fstat.Mode()&^07777 == os.ModeSocket {
 		// don't give access 2 sockets !
 		w.WriteHeader(403)
 		return true
@@ -261,7 +279,7 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if serverConfigs.RunTarpit {
-			log.Println("throw into tarpit")
+			log.Println("throw tar")
 			w.WriteHeader(RunTarpitHTTPStatusCodes[rand.Intn(len(RunTarpitHTTPStatusCodes))])
 			return
 		} else {
