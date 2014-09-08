@@ -82,6 +82,8 @@ func main() {
 			}
 		}
 	}
+	
+	// check files on ServerFile list
 	serverFileList = []string{}
 	for _, fNme := range serverConfigs.ServerFiles {
 		// check files on list
@@ -92,12 +94,16 @@ func main() {
 		}
 		serverFileList = append(serverFileList, fNme)
 	}
+	
+	log.Println("Server will serve these files:")
 	serverConfigs.ServerFiles = []string{}
 	for _, fNme := range serverFileList {
 		serverConfigs.ServerFiles = append(serverConfigs.ServerFiles, fNme)
+		log.Println("  ", fNme)
 	}
 
-	log.Println("Server will serve these files:", serverConfigs.ServerFiles)
+	
+	
 
 	// start Server
 	http.HandleFunc("/", logPanic(rootHandler))
@@ -129,7 +135,7 @@ func lsDir(dir string) {
 		log.Println(err)
 	}
 	for _, f := range ls {
-		if f.Name()[0] == '.' || f.Name() == ".DS_Store" {
+		if f.Name()[0] == '.' {
 			continue
 		}
 		fleNme := dir + string(os.PathSeparator) + f.Name()
