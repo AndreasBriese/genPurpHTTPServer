@@ -1,13 +1,18 @@
 package main
 
 import (
+	"compress/gzip"
+	"compress/zlib"
 	"encoding/json"
 	"flag"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
+	"mime"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 	"time"
 )
@@ -15,19 +20,19 @@ import (
 const ()
 
 type Configs struct {
-	ServerFiles []string
-	AutoTypes   []string
-	ServerAddr  string
-	ServerPath  string
+	ServerFiles   []string
+	AutoTypes     []string
+	ServerAddr    string
+	ServerPath    string
 	ServerLogging bool
-	Tarpit      bool
+	RunTarpit     bool
 }
 
 var (
-	serverAddr            = ":9000" // change to your serveraddress and port
-	serverConfigs         Configs
-	serverFileList        []string
-	TarpitHTTPStatusCodes = []int{
+	serverAddr               = ":9000" // change to your default serveraddress and port
+	serverConfigs            Configs
+	serverFileList           []string
+	RunTarpitHTTPStatusCodes = []int{
 		200, 201, 202, 203, 206, 207,
 		300, 305, 306,
 		400, 401, 402, 403, 404, 405, 406, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 420, 422, 423, 424, 425, 426,
@@ -46,10 +51,11 @@ func init() {
 		}
 	}
 	serverConfigs = loadConfigs()
+	// log.Println(serverConfigs)
 	if len(serverConfigs.ServerAddr) > 0 {
 		serverAddr = serverConfigs.ServerAddr
 	}
-	
+
 	serverAddr = *(flag.String("address", serverAddr, "Server address"))
 	flag.Parse()
 }
@@ -84,17 +90,17 @@ func main() {
 		WriteTimeout:   10 * time.Second,
 		MaxHeaderBytes: 1 << 16,
 	}
-	
+
 	log.Println("Server starts at", serverAddr)
-	
+
 	if !serverConfigs.ServerLogging {
 		log.Println("Config says: No server logging")
 	}
-	
-	if serverConfigs.Tarpit {
+
+	if serverConfigs.RunTarpit {
 		log.Println("Spider/pentester tarpit activated!")
 	}
-	
+
 	log.Fatal(serv.ListenAndServe())
 
 }
@@ -141,6 +147,63 @@ func logPanic(function func(http.ResponseWriter, *http.Request)) func(http.Respo
 	}
 }
 
+func compressedServe(w http.ResponseWriter, r *http.Request, filePath string, out io.Writer) bool {
+	f, err := os.Open(filePath)
+	if err != nil {
+		w.WriteHeader(404)
+		return true
+	}
+	defer f.Close()
+
+	fstat, err := f.Stat()
+
+	if err != nil {
+		w.WriteHeader(500)
+		return true
+	}
+
+	if (fstat.Mode() &^ 07777) == os.ModeSocket {
+		// don't give access 2 sockets !
+		w.WriteHeader(403)
+		return true
+	}
+
+	// from Golang http.ServeFile code
+	if t, err := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since")); err == nil && fstat.ModTime().Unix() <= t.Unix() {
+		w.WriteHeader(304)
+		return true
+	}
+	w.Header().Set("Last-Modified", fstat.ModTime().Format(http.TimeFormat))
+
+	// set header 4 mimetype
+	if mimeTyp := mime.TypeByExtension(path.Ext(filePath)); mimeTyp != "" {
+		mimeCat := strings.Split(mimeTyp, "/")
+		if mimeCat[0] == "video" || mimeCat[0] == "audio" || mimeCat[1] == "pdf" {
+			// leave AV content to http.ServeFile
+			return false
+		}
+		w.Header().Set("Content-Type", mimeTyp)
+	} else {
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+
+	var buf = make([]byte, fstat.Size())
+	var n int
+	for err == nil {
+		n, err = f.Read(buf)
+		out.Write(buf[0:n])
+	}
+
+	switch out.(type) {
+	case *gzip.Writer:
+		out.(*gzip.Writer).Close()
+	case *zlib.Writer:
+		out.(*zlib.Writer).Close()
+	}
+
+	return true
+}
+
 func rootHandler(w http.ResponseWriter, r *http.Request) {
 	if serverConfigs.ServerLogging {
 		log.Printf("(%v) %v \"%s %s %s\" \"%s\" \"%s\"\n",
@@ -163,12 +226,43 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 	if len(serverConfigs.ServerFiles) > 0 {
 		for _, f := range serverConfigs.ServerFiles {
 			if strings.EqualFold(req[1], f) {
-				http.ServeFile(w, r, f)
+				//
+				// file is in list 4 serving
+				if strings.EqualFold(f[len(f)-4:], ".jpg") {
+					// serve jpgs uncompressed
+					http.ServeFile(w, r, f)
+					return
+				}
+				var servedCompressed bool
+				if r.Header.Get("Accept-Encoding") != "" {
+					// client accepts encoding
+					// check 4 gzip / deflate
+				loop:
+					for _, enc := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
+						switch enc {
+						case "gzip":
+							w.Header().Set("Content-Encoding", "gzip")
+							out := gzip.NewWriter(w)
+							servedCompressed = compressedServe(w, r, f, out)
+							break loop
+						case "deflate":
+							w.Header().Set("Content-Encoding", "deflate")
+							out := zlib.NewWriter(w)
+							servedCompressed = compressedServe(w, r, f, out)
+							break loop
+						}
+					}
+				}
+				// else serve uncompressed
+				if !servedCompressed {
+					http.ServeFile(w, r, f)
+				}
 				return
 			}
 		}
-		if serverConfigs.Tarpit {
-			w.WriteHeader(TarpitHTTPStatusCodes[rand.Intn(len(TarpitHTTPStatusCodes))])
+		if serverConfigs.RunTarpit {
+			log.Println("throw into tarpit")
+			w.WriteHeader(RunTarpitHTTPStatusCodes[rand.Intn(len(RunTarpitHTTPStatusCodes))])
 			return
 		} else {
 			w.WriteHeader(404)
