@@ -71,7 +71,6 @@ var (
 
 func init() {
 	env := os.Environ()
-	log.Println(env)
 	var home string
 	for _, evs := range env {
 		e := strings.SplitAfterN(evs, "=", 2)
