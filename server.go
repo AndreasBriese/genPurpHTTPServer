@@ -71,12 +71,17 @@ var (
 
 func init() {
 	env := os.Environ()
+	log.Println(env)
+	var home string
 	for _, evs := range env {
 		e := strings.SplitAfterN(evs, "=", 2)
 		// log.Println(evs, e)
-		if e[0] == "_=" {
+		switch e[0] {
+		case "_=":
 			ee := strings.Split(e[1], string(os.PathSeparator))
 			os.Chdir(strings.Join(ee[0:len(ee)-1], string(os.PathSeparator)))
+		case "HOME=":
+			home = e[1]
 		}
 	}
 	serverConfigs = loadConfigs()
@@ -84,12 +89,17 @@ func init() {
 	if len(serverConfigs.ServerAddr) > 0 {
 		serverAddr = serverConfigs.ServerAddr
 	}
+	if len(serverConfigs.ServerPath) > 0 && serverConfigs.ServerPath[0] == '~' {
+		serverConfigs.ServerPath = home + serverConfigs.ServerPath[1:]
+		os.Chdir(serverConfigs.ServerPath)
+	}
 
-	serverAddr = *(flag.String("address", serverAddr, "Server address"))
-	flag.Parse()
+	// eventually override serverAddr by commandline option
+	flag.StringVar(&serverAddr, "address", serverAddr, "Server address")
 }
 
 func main() {
+	flag.Parse()
 	if len(serverConfigs.ServerPath) > 0 {
 		os.Chdir(serverConfigs.ServerPath)
 	}
@@ -111,7 +121,7 @@ func main() {
 			}
 		}
 	}
-	
+
 	// check files on ServerFile list
 	serverFileList = []string{}
 	for _, fNme := range serverConfigs.ServerFiles {
@@ -123,16 +133,13 @@ func main() {
 		}
 		serverFileList = append(serverFileList, fNme)
 	}
-	
+
 	log.Println("Server will serve these files:")
 	serverConfigs.ServerFiles = []string{}
 	for _, fNme := range serverFileList {
 		serverConfigs.ServerFiles = append(serverConfigs.ServerFiles, fNme)
 		log.Println("  ", fNme)
 	}
-
-	
-	
 
 	// start Server
 	http.HandleFunc("/", logPanic(rootHandler))
@@ -186,6 +193,7 @@ func loadConfigs() (cfg Configs) {
 		return cfg
 	}
 	json.Unmarshal(cfgs, &cfg)
+	log.Println("./SERVER.conf loaded")
 	return cfg
 }
 
@@ -314,8 +322,9 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if serverConfigs.RunTarpit {
-			log.Println("throw tar")
-			w.WriteHeader(RunTarpitHTTPStatusCodes[rand.Intn(len(RunTarpitHTTPStatusCodes))])
+			tarpitHeader := RunTarpitHTTPStatusCodes[rand.Intn(len(RunTarpitHTTPStatusCodes))]
+			log.Println("throw tar -> HTTP Status", tarpitHeader)
+			w.WriteHeader(tarpitHeader)
 			return
 		} else {
 			w.WriteHeader(404)
