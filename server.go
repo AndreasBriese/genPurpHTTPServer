@@ -46,7 +46,9 @@ import (
 	"time"
 )
 
-const ()
+const (
+  HOME string = "."   // change this to the relative path from your working directory
+)
 
 type Configs struct {
 	ServerFiles   []string
@@ -70,26 +72,14 @@ var (
 )
 
 func init() {
-	env := os.Environ()
-	var home string
-	for _, evs := range env {
-		e := strings.SplitAfterN(evs, "=", 2)
-		// log.Println(evs, e)
-		switch e[0] {
-		case "_=":
-			ee := strings.Split(e[1], string(os.PathSeparator))
-			os.Chdir(strings.Join(ee[0:len(ee)-1], string(os.PathSeparator)))
-		case "HOME=":
-			home = e[1]
-		}
-	}
+	
 	serverConfigs = loadConfigs()
 	// log.Println(serverConfigs)
 	if len(serverConfigs.ServerAddr) > 0 {
 		serverAddr = serverConfigs.ServerAddr
 	}
 	if len(serverConfigs.ServerPath) > 0 && serverConfigs.ServerPath[0] == '~' {
-		serverConfigs.ServerPath = home + serverConfigs.ServerPath[1:]
+		serverConfigs.ServerPath = HOME + string(os.PathSeparator) + serverConfigs.ServerPath[1:]
 		os.Chdir(serverConfigs.ServerPath)
 	}
 
